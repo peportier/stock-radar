@@ -13,7 +13,7 @@ if (!require(BatchGetSymbols)) install.packages('BatchGetSymbols')
 ```{r}
 library(BatchGetSymbols)
 
-first.date <- Sys.Date() - 15*365
+first.date <- Sys.Date() - 12*365
 last.date <- Sys.Date()
 freq.data <- 'daily'
 tickers <- c('FB', 'AI.PA')
@@ -31,8 +31,76 @@ print(l.out$df.control)
 
 ```{r}
 library(ggplot2)
- 
 p <- ggplot(l.out$df.tickers, aes(x = ref.date, y = price.close))
+p <- p + geom_line()
+p <- p + facet_wrap(~ticker, scales = 'free_y') 
+print(p)
+```
+
+```{r}
+if (!require(rvest)) install.packages('rvest')
+wikispx <- read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
+spxCurrentConstituents <- wikispx %>%
+  html_node('#constituents') %>%
+  html_table(header = TRUE)
+```
+
+```{r}
+if (!require(lubridate)) install.packages('lubridate')
+spxchanges <- wikispx %>%
+  html_node('#changes') %>%
+  html_table(header = FALSE, fill = TRUE) %>%
+  filter(row_number() > 2) %>% # First two rows are headers
+  `colnames<-`(c('Date','AddTicker','AddName','RemovedTicker','RemovedName','Reason')) %>%
+  mutate(Date = as.Date(Date, format = '%B %d, %Y'),
+         year = year(Date),
+         month = month(Date))
+```
+
+```{r}
+currentmonth <- as.Date(format(Sys.Date(), '%Y-%m-01'))
+monthseq <- seq.Date(as.Date('1990-01-01'), currentmonth, by = 'month') %>% rev()
+spxstocks <- spxCurrentConstituents %>% mutate(Date = currentmonth) %>% select(Date, Ticker = Symbol, Name = Security)
+lastrunstocks <- spxstocks
+for (i in 2:length(monthseq)) {
+  d <- monthseq[i]
+  y <- year(d)
+  m <- month(d)
+  changes <- spxchanges %>% filter(year == year(d), month == month(d))
+  tickerstokeep <- lastrunstocks %>%
+    anti_join(changes, by = c('Ticker' = 'AddTicker')) %>%
+    mutate(Date = d)
+  tickerstoadd <- changes %>%
+    filter(!RemovedTicker == '') %>%
+    transmute(Date = d, Ticker = RemovedTicker, Name = RemovedName)
+  thismonth <- tickerstokeep %>% bind_rows(tickerstoadd)
+  spxstocks <- spxstocks %>% bind_rows(thismonth)
+  lastrunstocks <- thismonth
+}
+```
+
+```{r}
+spxstocks %>%
+  group_by(Date) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x=Date, y=count)) +
+    geom_line() +
+    ggtitle('Count of historic SPX constituents by Date')
+```
+
+```{r}
+first.date <- '1990-01-01'
+last.date <- Sys.Date()
+freq.data <- 'daily'
+tickers <- c('MMM')
+
+test <- BatchGetSymbols(tickers = tickers,
+                         first.date = first.date,
+                         last.date = last.date,
+                         freq.data = freq.data,
+                         cache.folder = file.path(tempdir(), 'BGS_Cache'))
+
+p <- ggplot(test$df.tickers, aes(x = ref.date, y = price.close))
 p <- p + geom_line()
 p <- p + facet_wrap(~ticker, scales = 'free_y') 
 print(p)
